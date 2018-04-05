@@ -23,6 +23,8 @@ install:
 
 script:
   - "nf-core lint ${TRAVIS_BUILD_DIR}"
-  - "./run_test.sh ${FL} -b"
-  - "./run_test.sh ${FL}"
+  - "SECONDS=0 && travis_wait 50 ./run_test.sh ${FL} -b"
+  - 'echo "Test run took $(($SECONDS / 60)) minutes and $(($SECONDS % 60)) seconds."'
+  - "SECONDS=0 && travis_wait 50 ./run_test.sh ${FL}"
+  - 'echo "Test run took $(($SECONDS / 60)) minutes and $(($SECONDS % 60)) seconds."'
   - "find results/" # Print results files
