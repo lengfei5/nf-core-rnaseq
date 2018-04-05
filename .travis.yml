@@ -1,10 +1,10 @@
 sudo: required
 language: python
-jdk: openjdk8
 services:
   - docker
-python:
-  - "3.6"
+jdk: openjdk8
+python: "3.6"
+node_js: "node"
 cache: pip
 matrix:
   fast_finish: true
@@ -19,12 +19,10 @@ env:
 
 install:
   - "./tests/install.sh $T"
+  - "npm install -g gnomon"
   - "cd ${TRAVIS_BUILD_DIR}/tests/"
 
 script:
   - "nf-core lint ${TRAVIS_BUILD_DIR}"
-  - "SECONDS=0 && travis_wait 50 ./run_test.sh ${FL} -b"
-  - 'echo "Test run took $(($SECONDS / 60)) minutes and $(($SECONDS % 60)) seconds."'
-  - "SECONDS=0 && travis_wait 50 ./run_test.sh ${FL}"
-  - 'echo "Test run took $(($SECONDS / 60)) minutes and $(($SECONDS % 60)) seconds."'
+  - "./run_test.sh ${FL} -b | gnomon --medium 120.0 --high 600.0 --real-time=false"
   - "find results/" # Print results files
