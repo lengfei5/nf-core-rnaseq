@@ -79,17 +79,12 @@ if (params.help){
 }
 
 // Configurable variables
-params.name = false
-params.project = false
-params.genome = false
 params.star_index = params.genome ? params.genomes[ params.genome ].star ?: false : false
 params.fasta = params.genome ? params.genomes[ params.genome ].fasta ?: false : false
 params.gtf = params.genome ? params.genomes[ params.genome ].gtf ?: false : false
 params.bed12 = params.genome ? params.genomes[ params.genome ].bed12 ?: false : false
 params.hisat2_index = params.genome ? params.genomes[ params.genome ].hisat2 ?: false : false
 params.multiqc_config = "$baseDir/assets/multiqc_config.yaml"
-params.email = false
-params.plaintext_email = false
 
 mdsplot_header = file("$baseDir/assets/mdsplot_header.txt")
 heatmap_header = file("$baseDir/assets/heatmap_header.txt")
