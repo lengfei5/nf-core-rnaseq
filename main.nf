@@ -59,6 +59,8 @@ def helpMessage() {
       --three_prime_clip_r1 [int]   Instructs Trim Galore to remove bp from the 3' end of read 1 AFTER adapter/quality trimming has been performed
       --three_prime_clip_r2 [int]   Instructs Trim Galore to re move bp from the 3' end of read 2 AFTER adapter/quality trimming has been performed
 
+    Alignment options
+    --max_IntronL [int]             Maximum intron length for star aligner (50000 for c.elegans)
     Presets:
       --pico                        Sets trimming and standedness settings for the SMARTer Stranded Total RNA-Seq Kit - Pico Input kit. Equivalent to: --forward_stranded --clip_r1 3 --three_prime_clip_r2 3
 
@@ -128,6 +130,7 @@ three_prime_clip_r2 = params.three_prime_clip_r2
 forward_stranded = params.forward_stranded
 reverse_stranded = params.reverse_stranded
 unstranded = params.unstranded
+max_IntronL = params.max_IntronL
 
 // Preset trimming options
 if (params.pico){
@@ -252,6 +255,7 @@ summary["Trim 3' R1"] = three_prime_clip_r1
 summary["Trim 3' R2"] = three_prime_clip_r2
 if(params.aligner == 'star'){
     summary['Aligner'] = "STAR"
+    summary['max_IntronL'] = max_IntronL
     if(params.star_index)          summary['STAR Index']   = params.star_index
     else if(params.fasta)          summary['Fasta Ref']    = params.fasta
 } else if(params.aligner == 'hisat2') {
@@ -554,14 +558,15 @@ if(params.aligner == 'star'){
         script:
         prefix = reads[0].toString() - ~/(_R1)?(_trimmed)?(_val_1)?(\.fq)?(\.fastq)?(\.gz)?$/
         def star_mem = task.memory ?: params.star_memory ?: false
-        def avail_mem = star_mem ? "--limitBAMsortRAM ${star_mem.toBytes() - 100000000}" : '' 
+        def avail_mem = star_mem ? "--limitBAMsortRAM ${star_mem.toBytes() - 100000000}" : ''
         seqCenter = params.seqCenter ? "--outSAMattrRGline ID:$prefix 'CN:$params.seqCenter'" : ''
         """
         STAR --genomeDir $index \\
             --sjdbGTFfile $gtf \\
             --readFilesIn $reads  \\
             --runThreadN ${task.cpus} \\
-            --twopassMode Basic \\
+            --twopassMode None \\
+            --alignIntronMax ${max_IntronL} \\
             --outWigType bedGraph \\
             --outSAMtype BAM SortedByCoordinate $avail_mem \\
             --readFilesCommand zcat \\
@@ -924,8 +929,8 @@ process featureCounts {
     // Try to get real sample name
     sample_name = bam_featurecounts.baseName - 'Aligned.sortedByCoord.out'
     """
-    featureCounts -a $gtf -g gene_id -o ${bam_featurecounts.baseName}_gene.featureCounts.txt -p -s $featureCounts_direction $bam_featurecounts
-    featureCounts -a $gtf -g gene_biotype -o ${bam_featurecounts.baseName}_biotype.featureCounts.txt -p -s $featureCounts_direction $bam_featurecounts
+    featureCounts -t exon -a $gtf -g gene_id -o ${bam_featurecounts.baseName}_gene.featureCounts.txt -p -s $featureCounts_direction $bam_featurecounts
+    featureCounts -t exon -a $gtf -g gene_biotype -o ${bam_featurecounts.baseName}_biotype.featureCounts.txt -p -s $featureCounts_direction $bam_featurecounts
     cut -f 1,7 ${bam_featurecounts.baseName}_biotype.featureCounts.txt | tail -n +3 | cat $biotypes_header - >> ${bam_featurecounts.baseName}_biotype_counts_mqc.txt
     mqc_features_stat.py ${bam_featurecounts.baseName}_biotype_counts_mqc.txt -s $sample_name -f rRNA -o ${bam_featurecounts.baseName}_biotype_counts_gs_mqc.tsv
     """
