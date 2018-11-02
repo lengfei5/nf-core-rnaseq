@@ -3,7 +3,7 @@
 # https://github.com/lengfei5/nf-core-rnaseq/blob/master/docs/configuration/adding_your_own.md
 # 
 ##############
-fqs='/scratch/jiwang/Ariane_R6875/ngs_raw/*.fastq'
+fqs='/scratch/jiwang/Ariane_R6875/ngs_raw/FASTQs/*.fastq'
 output='/scratch/jiwang/Ariane_R6875/results'
 workdir='/scratch/jiwang/Ariane_R6875/work'
 

@@ -8,10 +8,16 @@ report_comment: >
     <a href="https://github.com/nf-core/rnaseq/blob/master/docs/output.md" target="_blank">documentation</a>.
 swedac_accredited: true
 top_modules:
+  - 'fastqc'
+  - 'cutadapt'
+  - 'star'
+  - 'featureCounts'
+  - 'biotype_counts'
+  - 'featureCounts_biotype'
+  - 'rseqc'
+  - 'DupRadar'
   - 'edgeR-sample-distances'
   - 'sample-similarity'
-  - 'DupRadar'
-  - 'biotype-counts'
 
 report_section_order:
     software_versions:
