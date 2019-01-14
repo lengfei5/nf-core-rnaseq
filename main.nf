@@ -880,6 +880,10 @@ process sample_correlation {
     when:
     !params.skip_qc && !params.skip_edger
 
+    //skip_edger = false
+    //when:
+    //!params.skip_qc && !params.skip_dupradar
+
     input:
     file input_files from geneCounts.collect()
     val num_bams from bam_count.count()
