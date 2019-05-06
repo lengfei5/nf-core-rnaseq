@@ -800,8 +800,9 @@ process featureCounts {
         """
     } else {
         """
-        featureCounts -t exon -a $gtf -Q 10 -g gene_id -o ${bam_featurecounts.baseName}_gene.featureCounts.txt -p -s $featureCounts_direction $bam_featurecounts
-        featureCounts -t exon -a $gtf -Q 10 -g gene_biotype -o ${bam_featurecounts.baseName}_biotype.featureCounts.txt -p -s $featureCounts_direction $bam_featurecounts
+        samtools sort $bam_featurecounts -o ${bam_featurecounts.baseName}_sorted.bam
+        featureCounts -t exon -a $gtf -Q 10 -g gene_id -o ${bam_featurecounts.baseName}_gene.featureCounts.txt -p -s $featureCounts_direction ${bam_featurecounts.baseName}_sorted.bam
+        featureCounts -t exon -a $gtf -Q 10 -g gene_biotype -o ${bam_featurecounts.baseName}_biotype.featureCounts.txt -p -s $featureCounts_direction ${bam_featurecounts.baseName}_sorted.bam
         cut -f 1,7 ${bam_featurecounts.baseName}_biotype.featureCounts.txt | tail -n +3 | cat $biotypes_header - >> ${bam_featurecounts.baseName}_biotype_counts_mqc.txt
         mqc_features_stat.py ${bam_featurecounts.baseName}_biotype_counts_mqc.txt -s $sample_name -f rRNA -o ${bam_featurecounts.baseName}_biotype_counts_gs_mqc.tsv
         """
