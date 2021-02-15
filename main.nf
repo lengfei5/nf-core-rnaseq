@@ -589,13 +589,7 @@ if(params.aligner == 'hisat2'){
     star_log = Channel.from(false)
     process hisat2Align {
         tag "$prefix"
-        publishDir "${params.outdir}/HISAT2", mode: 'copy',
-            saveAs: {filename ->
-                if (filename.indexOf(".hisat2_summary.txt") > 0) "logs/$filename"
-                else if (!params.saveAlignedIntermediates && filename == "where_are_my_files.txt") filename
-                else if (params.saveAlignedIntermediates && filename != "where_are_my_files.txt") filename
-                else null
-            }
+        publishDir "${params.outdir}/HISAT2", mode: 'copy'
 
         input:
         file reads from trimmed_reads
@@ -609,7 +603,7 @@ if(params.aligner == 'hisat2'){
         file "where_are_my_files.txt"
 
         script:
-        index_base = hs2_indices[0].toString() - ~/.\d.ht2/
+        index_base = hs2_indices[0].toString() - ~/.\d.ht2l/
         prefix = reads[0].toString() - ~/(_R1)?(_trimmed)?(_val_1)?(\.fq)?(\.fastq)?(\.gz)?$/
         seqCenter = params.seqCenter ? "--rg-id ${prefix} --rg CN:${params.seqCenter.replaceAll('\\s','_')}" : ''
         def rnastrandness = ''
@@ -636,14 +630,15 @@ if(params.aligner == 'hisat2'){
                    -1 ${reads[0]} \\
                    -2 ${reads[1]} \\
                    $rnastrandness \\
-                   --known-splicesite-infile $alignment_splicesites \\
                    --no-mixed \\
                    --no-discordant \\
                    -p ${task.cpus} \\
+                   -k 5 \\
+                   --no-unal \\
                    --met-stderr \\
                    --new-summary \\
                    --summary-file ${prefix}.hisat2_summary.txt $seqCenter \\
-                   | samtools view -bS -F 4 -F 8 -F 256 - > ${prefix}.bam
+                   | samtools view -bS - > ${prefix}.bam
             """
         }
     }
