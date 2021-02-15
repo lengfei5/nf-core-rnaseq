@@ -355,6 +355,9 @@ if(params.aligner == 'hisat2' && !params.splicesites){
         """
     }
 }
+
+
+
 /*
  * PREPROCESSING - Convert GFF3 to GTF
  */
