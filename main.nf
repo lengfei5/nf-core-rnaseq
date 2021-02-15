@@ -357,6 +357,49 @@ if(params.aligner == 'hisat2' && !params.splicesites){
 }
 
 
+/*
+ * PREPROCESSING - Build HISAT2 index
+ */
+if(params.aligner == 'hisat2' && !params.hisat2_index && fasta){
+    process makeHISATindex {
+        tag "$fasta"
+        publishDir path: { params.saveReference ? "${params.outdir}/reference_genome" : params.outdir },
+                   saveAs: { params.saveReference ? it : null }, mode: 'copy'
+
+        input:
+        file fasta from fasta
+        file indexing_splicesites from indexing_splicesites
+        file gtf from gtf_makeHISATindex
+
+        output:
+        file "${fasta.baseName}.*.ht2" into hs2_indices
+
+        script:
+        if( !task.memory ){
+            log.info "[HISAT2 index build] Available memory not known - defaulting to 0. Specify process memory requirements to change this."
+            avail_mem = 0
+        } else {
+            log.info "[HISAT2 index build] Available memory: ${task.memory}"
+            avail_mem = task.memory.toGiga()
+        }
+        if( avail_mem > params.hisatBuildMemory ){
+            log.info "[HISAT2 index build] Over ${params.hisatBuildMemory} GB available, so using splice sites and exons in HISAT2 index"
+            extract_exons = "hisat2_extract_exons.py $gtf > ${gtf.baseName}.hisat2_exons.txt"
+            ss = "--ss $indexing_splicesites"
+            exon = "--exon ${gtf.baseName}.hisat2_exons.txt"
+        } else {
+            log.info "[HISAT2 index build] Less than ${params.hisatBuildMemory} GB available, so NOT using splice sites and exons in HISAT2 index."
+            log.info "[HISAT2 index build] Use --hisatBuildMemory [small number] to skip this check."
+            extract_exons = ''
+            ss = ''
+            exon = ''
+        }
+        """
+        $extract_exons
+        hisat2-build -p ${task.cpus} $ss $exon $fasta ${fasta.baseName}.hisat2_index
+        """
+    }
+}
 
 /*
  * PREPROCESSING - Convert GFF3 to GTF
@@ -538,6 +581,101 @@ if(params.aligner == 'star'){
         .flatMap {  logs, bams -> bams }
     .into { bam_count; bam_rseqc; bam_preseq; bam_markduplicates; bam_featurecounts; bam_stringtieFPKM; bam_for_genebody }
 }
+
+/*
+ * STEP 3 - align with HISAT2
+ */
+if(params.aligner == 'hisat2'){
+    star_log = Channel.from(false)
+    process hisat2Align {
+        tag "$prefix"
+        publishDir "${params.outdir}/HISAT2", mode: 'copy',
+            saveAs: {filename ->
+                if (filename.indexOf(".hisat2_summary.txt") > 0) "logs/$filename"
+                else if (!params.saveAlignedIntermediates && filename == "where_are_my_files.txt") filename
+                else if (params.saveAlignedIntermediates && filename != "where_are_my_files.txt") filename
+                else null
+            }
+
+        input:
+        file reads from trimmed_reads
+        file hs2_indices from hs2_indices.collect()
+        file alignment_splicesites from alignment_splicesites.collect()
+        file wherearemyfiles
+
+        output:
+        file "${prefix}.bam" into hisat2_bam
+        file "${prefix}.hisat2_summary.txt" into alignment_logs
+        file "where_are_my_files.txt"
+
+        script:
+        index_base = hs2_indices[0].toString() - ~/.\d.ht2/
+        prefix = reads[0].toString() - ~/(_R1)?(_trimmed)?(_val_1)?(\.fq)?(\.fastq)?(\.gz)?$/
+        seqCenter = params.seqCenter ? "--rg-id ${prefix} --rg CN:${params.seqCenter.replaceAll('\\s','_')}" : ''
+        def rnastrandness = ''
+        if (forward_stranded && !unstranded){
+            rnastrandness = params.singleEnd ? '--rna-strandness F' : '--rna-strandness FR'
+        } else if (reverse_stranded && !unstranded){
+            rnastrandness = params.singleEnd ? '--rna-strandness R' : '--rna-strandness RF'
+        }
+        if (params.singleEnd) {
+            """
+            hisat2 -x $index_base \\
+                   -U $reads \\
+                   $rnastrandness \\
+                   --known-splicesite-infile $alignment_splicesites \\
+                   -p ${task.cpus} \\
+                   --met-stderr \\
+                   --new-summary \\
+                   --summary-file ${prefix}.hisat2_summary.txt $seqCenter \\
+                   | samtools view -bS -F 4 -F 256 - > ${prefix}.bam
+            """
+        } else {
+            """
+            hisat2 -x $index_base \\
+                   -1 ${reads[0]} \\
+                   -2 ${reads[1]} \\
+                   $rnastrandness \\
+                   --known-splicesite-infile $alignment_splicesites \\
+                   --no-mixed \\
+                   --no-discordant \\
+                   -p ${task.cpus} \\
+                   --met-stderr \\
+                   --new-summary \\
+                   --summary-file ${prefix}.hisat2_summary.txt $seqCenter \\
+                   | samtools view -bS -F 4 -F 8 -F 256 - > ${prefix}.bam
+            """
+        }
+    }
+
+    process hisat2_sortOutput {
+        tag "${hisat2_bam.baseName}"
+        publishDir "${params.outdir}/HISAT2", mode: 'copy',
+            saveAs: { filename ->
+                if (!params.saveAlignedIntermediates && filename == "where_are_my_files.txt") filename
+                else if (params.saveAlignedIntermediates && filename != "where_are_my_files.txt") "aligned_sorted/$filename"
+                else null
+            }
+
+        input:
+        file hisat2_bam
+        file wherearemyfiles
+
+        output:
+        file "${hisat2_bam.baseName}.sorted.bam" into bam_count, bam_rseqc, bam_preseq, bam_markduplicates, bam_featurecounts, bam_stringtieFPKM, bam_for_genebody
+        file "where_are_my_files.txt"
+
+        script:
+        def avail_mem = task.memory ? "-m ${task.memory.toBytes() / task.cpus}" : ''
+        """
+        samtools sort \\
+            $hisat2_bam \\
+            -@ ${task.cpus} $avail_mem \\
+            -o ${hisat2_bam.baseName}.sorted.bam
+        """
+    }
+}
+
 
 /*
  * STEP 4 - RSeQC analysis
