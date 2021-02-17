@@ -337,7 +337,7 @@ if(params.aligner == 'star' && !params.star_index && fasta){
 /*
  * PREPROCESSING - Build HISAT2 splice sites file
  */
-if(params.aligner == 'hisat2' && !params.splicesites){
+if(params.aligner == 'hisat2' && !params.splicesites && params.hisat2withSplicessites){
     process makeHisatSplicesites {
         tag "$gtf"
         publishDir path: { params.saveReference ? "${params.outdir}/reference_genome" : params.outdir },
