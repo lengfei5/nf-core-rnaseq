@@ -438,7 +438,7 @@ if(!params.bed12){
 
         script: // This script is bundled with the pipeline, in nfcore/rnaseq/bin/
         """
-        gtf2bed $gtf > ${gtf.baseName}.bed
+        perl $baseDir/bin/gtf2bed $gtf > ${gtf.baseName}.bed
         """
     }
 }
@@ -452,7 +452,7 @@ process fastqc {
         saveAs: {filename -> filename.indexOf(".zip") > 0 ? "zips/$filename" : "$filename"}
 
     when:
-    !params.skip_qc && !params.skip_fastqc
+    !params.skip_fastqc
 
     input:
     set val(name), file(reads) from raw_reads_fastqc
@@ -462,7 +462,10 @@ process fastqc {
 
     script:
     """
+    ml load fastqc/0.11.8-java-1.8;
     fastqc -q $reads
+    cat $reads | paste - - - - | wc -l > ${name}_cnt.txt
+
     """
 }
 
@@ -498,10 +501,12 @@ process trim_galore {
     tpc_r2 = three_prime_clip_r2 > 0 ? "--three_prime_clip_r2 ${three_prime_clip_r2}" : ''
     if (params.singleEnd) {
         """
+        ml load trim_galore/0.6.2-foss-2018b-python-3.6.6
         trim_galore --fastqc --gzip $c_r1 $tpc_r1 $reads
         """
     } else {
         """
+        ml load trim_galore/0.6.2-foss-2018b-python-3.6.6
         trim_galore --paired --fastqc --gzip $c_r1 $c_r2 $tpc_r1 $tpc_r2 $reads
         """
     }
@@ -594,7 +599,7 @@ if(params.aligner == 'hisat2'){
         input:
         file reads from trimmed_reads
         file hs2_indices from hs2_indices.collect()
-        file alignment_splicesites from alignment_splicesites.collect()
+        //file alignment_splicesites from alignment_splicesites.collect()
         file wherearemyfiles
 
         output:
@@ -614,18 +619,23 @@ if(params.aligner == 'hisat2'){
         }
         if (params.singleEnd) {
             """
+            module load hisat2/2.1.0-foss-2018b
+            module load samtools/1.10-foss-2018b
             hisat2 -x $index_base \\
                    -U $reads \\
                    $rnastrandness \\
-                   --known-splicesite-infile $alignment_splicesites \\
                    -p ${task.cpus} \\
+                   -k 5 \\
+                   --no-unal \\
                    --met-stderr \\
                    --new-summary \\
                    --summary-file ${prefix}.hisat2_summary.txt $seqCenter \\
-                   | samtools view -bS -F 4 -F 256 - > ${prefix}.bam
+                   | samtools view -b -h -O BAM -o ${prefix}.bam
             """
         } else {
             """
+            module load hisat2/2.1.0-foss-2018b
+            module load samtools/1.10-foss-2018b
             hisat2 -x $index_base \\
                    -1 ${reads[0]} \\
                    -2 ${reads[1]} \\
@@ -638,7 +648,7 @@ if(params.aligner == 'hisat2'){
                    --met-stderr \\
                    --new-summary \\
                    --summary-file ${prefix}.hisat2_summary.txt $seqCenter \\
-                   | samtools view -bS - > ${prefix}.bam
+                   | samtools view -b -h -O BAM -o ${prefix}.bam
             """
         }
     }
@@ -663,10 +673,10 @@ if(params.aligner == 'hisat2'){
         script:
         def avail_mem = task.memory ? "-m ${task.memory.toBytes() / task.cpus}" : ''
         """
-        samtools sort \\
-            $hisat2_bam \\
-            -@ ${task.cpus} $avail_mem \\
-            -o ${hisat2_bam.baseName}.sorted.bam
+        module load samtools/1.10-foss-2018b
+        samtools sort -@ ${task.cpus} $avail_mem $hisat2_bam > ${hisat2_bam.baseName}.sorted.bam
+        samtools index -@ @{taks.cpus} -c -m 14 ${hisat2_bam.baseName}.sorted.bam
+
         """
     }
 }
@@ -741,8 +751,8 @@ process createBigWig {
     tag "${bam.baseName - 'sortedByCoord.out'}"
     publishDir "${params.outdir}/bigwig", mode: 'copy'
 
-    when:
-    !params.skip_qc
+    //when:
+    //!params.skip_qc
 
     input:
     file bam from bam_for_genebody
@@ -752,8 +762,16 @@ process createBigWig {
 
     script:
     """
-    samtools index $bam
-    bamCoverage -b $bam -p ${task.cpus} -o ${bam.baseName}.bigwig
+    ml load samtools/1.10-foss-2018b
+    samtools index -c -m 14 $bam
+    singularity exec --no-home --home /tmp /groups/tanaka/People/current/jiwang/local/deeptools_master.sif bamCoverage \
+      -b $bam \
+      -o ${bam.baseName}.bigwig \
+      --outFileFormat=bigwig \
+      --normalizeUsing CPM \
+      -p ${task.cpus} \
+      --binSize 20
+
     """
 }
 /*
@@ -928,19 +946,28 @@ process featureCounts {
 
     if (params.singleEnd) {
         """
-        samtools sort $bam_featurecounts -o ${bam_featurecounts.baseName}_sorted.bam
-        featureCounts -t exon -a $gtf -Q 10 -g gene_id -o ${bam_featurecounts.baseName}_gene.featureCounts.txt -s $featureCounts_direction ${bam_featurecounts.baseName}_sorted.bam
-        featureCounts -t exon -a $gtf -Q 10 -g gene_biotype -o ${bam_featurecounts.baseName}_biotype.featureCounts.txt -s $featureCounts_direction ${bam_featurecounts.baseName}_sorted.bam
-        cut -f 1,7 ${bam_featurecounts.baseName}_biotype.featureCounts.txt | tail -n +3 | cat $biotypes_header - >> ${bam_featurecounts.baseName}_biotype_counts_mqc.txt
-        mqc_features_stat.py ${bam_featurecounts.baseName}_biotype_counts_mqc.txt -s $sample_name -f rRNA -o ${bam_featurecounts.baseName}_biotype_counts_gs_mqc.tsv
+        ml load subread/2.0.1-gcc-7.3.0-2.30
+        featureCounts -t exon -a $gtf -Q 10 -g gene_id -o ${bam_featurecounts.baseName}_gene.featureCounts.txt -s $featureCounts_direction ${bam_featurecounts.baseName}.bam
+
+        if [ `cat ${gtf} |cut -f9 |grep biotype|wc -l` == 0 ]; then
+          touch ${bam_featurecounts.baseName}_biotype_counts_gs_mqc.tsv
+        else
+          featureCounts -t exon -a $gtf -g gene_biotype -o ${bam_featurecounts.baseName}_biotype.featureCounts.txt -s $featureCounts_direction $bam_featurecounts
+          cut -f 1,7 ${bam_featurecounts.baseName}_biotype.featureCounts.txt | tail -n +3 | cat $biotypes_header - >> ${bam_featurecounts.baseName}_biotype_counts_mqc.txt
+          python $baseDir/mqc_features_stat.py ${bam_featurecounts.baseName}_biotype_counts_mqc.txt -s $sample_name -f rRNA -o ${bam_featurecounts.baseName}_biotype_counts_gs_mqc.tsv
+        fi
         """
     } else {
         """
-        samtools sort $bam_featurecounts -o ${bam_featurecounts.baseName}_sorted.bam
-        featureCounts -t exon -a $gtf -Q 10 -g gene_id -o ${bam_featurecounts.baseName}_gene.featureCounts.txt -p -s $featureCounts_direction ${bam_featurecounts.baseName}_sorted.bam
-        featureCounts -t exon -a $gtf -Q 10 -g gene_biotype -o ${bam_featurecounts.baseName}_biotype.featureCounts.txt -p -s $featureCounts_direction ${bam_featurecounts.baseName}_sorted.bam
-        cut -f 1,7 ${bam_featurecounts.baseName}_biotype.featureCounts.txt | tail -n +3 | cat $biotypes_header - >> ${bam_featurecounts.baseName}_biotype_counts_mqc.txt
-        mqc_features_stat.py ${bam_featurecounts.baseName}_biotype_counts_mqc.txt -s $sample_name -f rRNA -o ${bam_featurecounts.baseName}_biotype_counts_gs_mqc.tsv
+        ml load subread/2.0.1-gcc-7.3.0-2.30
+        featureCounts -t exon -a $gtf -Q 10 -g gene_id -o ${bam_featurecounts.baseName}_gene.featureCounts.txt -p -s $featureCounts_direction ${bam_featurecounts.baseName}.bam
+        if [ `cat ${gtf} |cut -f9 |grep biotype|wc -l` == 0 ]; then
+          touch ${bam_featurecounts.baseName}_biotype_counts_gs_mqc.tsv
+        else
+          featureCounts -t exon -a $gtf -g gene_biotype -o ${bam_featurecounts.baseName}_biotype.featureCounts.txt -p -s $featureCounts_direction $bam_featurecounts
+          cut -f 1,7 ${bam_featurecounts.baseName}_biotype.featureCounts.txt | tail -n +3 | cat $biotypes_header - >> ${bam_featurecounts.baseName}_biotype_counts_mqc.txt
+          python $baseDir/mqc_features_stat.py ${bam_featurecounts.baseName}_biotype_counts_mqc.txt -s $sample_name -f rRNA -o ${bam_featurecounts.baseName}_biotype_counts_gs_mqc.tsv
+        fi
         """
     }
 }
@@ -961,7 +988,8 @@ process merge_featureCounts {
 
     script:
     """
-    merge_featurecounts.py -o merged_gene_counts.txt -i $input_files
+    python $baseDir/bin/merge_featurecounts.py -o merged_gene_counts.txt -i $input_files
+
     """
 }
 
@@ -971,6 +999,7 @@ process merge_featureCounts {
  */
 process stringtieFPKM {
     tag "${bam_stringtieFPKM.baseName - '.sorted'}"
+
     publishDir "${params.outdir}/stringtieFPKM", mode: 'copy',
         saveAs: {filename ->
             if (filename.indexOf("transcripts.gtf") > 0) "transcripts/$filename"
@@ -996,6 +1025,7 @@ process stringtieFPKM {
         st_direction = "--rf"
     }
     """
+    ml load stringtie/2.1.1-gcccore-7.3.0
     stringtie $bam_stringtieFPKM \\
         $st_direction \\
         -o ${bam_stringtieFPKM.baseName}_transcripts.gtf \\
@@ -1005,6 +1035,7 @@ process stringtieFPKM {
         -C ${bam_stringtieFPKM}.cov_refs.gtf \\
         -e \\
         -b ${bam_stringtieFPKM.baseName}_ballgown
+
     """
 }
 
@@ -1105,8 +1136,8 @@ process workflow_summary_mqc {
 process multiqc {
     publishDir "${params.outdir}/MultiQC", mode: 'copy'
 
-    when:
-    !params.skip_multiqc
+    //when:
+    //!params.skip_multiqc
 
     input:
     file multiqc_config
@@ -1118,11 +1149,11 @@ process multiqc {
     file ('preseq/*') from preseq_results.collect().ifEmpty([])
     file ('dupradar/*') from dupradar_results.collect().ifEmpty([])
     file ('featureCounts/*') from featureCounts_logs.collect()
-    file ('featureCounts_biotype/*') from featureCounts_biotype.collect()
+    file ('featureCounts_biotype/*') from featureCounts_biotype.collect().ifEmpty([])
     file ('stringtie/stringtie_log*') from stringtie_log.collect()
     file ('sample_correlation_results/*') from sample_correlation_results.collect().ifEmpty([]) // If the Edge-R is not run create an Empty array
-    file ('software_versions/*') from software_versions_yaml.collect()
-    file ('workflow_summary/*') from workflow_summary_yaml.collect()
+    file ('software_versions/*') from software_versions_yaml.collect().ifEmpty([])
+    file ('workflow_summary/*') from workflow_summary_yaml.collect().ifEmpty([])
 
     output:
     file "*multiqc_report.html" into multiqc_report
@@ -1132,10 +1163,12 @@ process multiqc {
     rtitle = custom_runName ? "--title \"$custom_runName\"" : ''
     rfilename = custom_runName ? "--filename " + custom_runName.replaceAll('\\W','_').replaceAll('_+','_') + "_multiqc_report" : ''
     """
+    ml load multiqc/1.9-foss-2018b-python-3.6.6
     multiqc . -f $rtitle $rfilename --config $multiqc_config \\
         -m custom_content -m picard -m preseq -m rseqc -m featureCounts -m hisat2 -m star -m cutadapt -m fastqc
     """
 }
+
 
 /*
  * STEP 13 - Output Description HTML
@@ -1157,7 +1190,7 @@ process output_documentation {
 
 
 /*
- * Completion e-mail notification
+ * Completion
  */
 workflow.onComplete {
 
@@ -1166,108 +1199,20 @@ workflow.onComplete {
     if(skipped_poor_alignment.size() > 0){
         subject = "[nfcore/rnaseq] Partially Successful (${skipped_poor_alignment.size()} skipped): $workflow.runName"
     }
-    if(!workflow.success){
-      subject = "[nfcore/rnaseq] FAILED: $workflow.runName"
-    }
-    def email_fields = [:]
-    email_fields['version'] = workflow.manifest.version
-    email_fields['runName'] = custom_runName ?: workflow.runName
-    email_fields['success'] = workflow.success
-    email_fields['dateComplete'] = workflow.complete
-    email_fields['duration'] = workflow.duration
-    email_fields['exitStatus'] = workflow.exitStatus
-    email_fields['errorMessage'] = (workflow.errorMessage ?: 'None')
-    email_fields['errorReport'] = (workflow.errorReport ?: 'None')
-    email_fields['commandLine'] = workflow.commandLine
-    email_fields['projectDir'] = workflow.projectDir
-    email_fields['summary'] = summary
-    email_fields['summary']['Date Started'] = workflow.start
-    email_fields['summary']['Date Completed'] = workflow.complete
-    email_fields['summary']['Pipeline script file path'] = workflow.scriptFile
-    email_fields['summary']['Pipeline script hash ID'] = workflow.scriptId
-    if(workflow.repository) email_fields['summary']['Pipeline repository Git URL'] = workflow.repository
-    if(workflow.commitId) email_fields['summary']['Pipeline repository Git Commit'] = workflow.commitId
-    if(workflow.revision) email_fields['summary']['Pipeline Git branch/tag'] = workflow.revision
-    if(workflow.container) email_fields['summary']['Docker image'] = workflow.container
-    email_fields['skipped_poor_alignment'] = skipped_poor_alignment
 
-    // On success try attach the multiqc report
-    def mqc_report = null
-    try {
-        if (workflow.success && !params.skip_multiqc) {
-            mqc_report = multiqc_report.getVal()
-            if (mqc_report.getClass() == ArrayList){
-                log.warn "[nfcore/rnaseq] Found multiple reports from process 'multiqc', will use only one"
-                mqc_report = mqc_report[0]
-                }
-        }
-    } catch (all) {
-        log.warn "[nfcore/rnaseq] Could not attach MultiQC report to summary email"
+    if(workflow.success){
+      log.info "------------------------------------------------"
+      log.info "[nfcore/rnaseq] Pipeline Successfullly Complete "
+      log.info "------------------------------------------------"
+    }else{
+      log.info "------------------------------------------------"
+      log.info "[nfcore/rnaseq] Pipeline Failed "
+      log.info "------------------------------------------------"
     }
 
-    // Render the TXT template
-    def engine = new groovy.text.GStringTemplateEngine()
-    def tf = new File("$baseDir/assets/email_template.txt")
-    def txt_template = engine.createTemplate(tf).make(email_fields)
-    def email_txt = txt_template.toString()
 
-    // Render the HTML template
-    def hf = new File("$baseDir/assets/email_template.html")
-    def html_template = engine.createTemplate(hf).make(email_fields)
-    def email_html = html_template.toString()
 
-    // Render the sendmail template
-    def smail_fields = [ email: params.email, subject: subject, email_txt: email_txt, email_html: email_html, baseDir: "$baseDir", mqcFile: mqc_report, mqcMaxSize: params.maxMultiqcEmailFileSize.toBytes() ]
-    def sf = new File("$baseDir/assets/sendmail_template.txt")
-    def sendmail_template = engine.createTemplate(sf).make(smail_fields)
-    def sendmail_html = sendmail_template.toString()
 
-    // Send the HTML e-mail
-    if (params.email) {
-        try {
-          if( params.plaintext_email ){ throw GroovyException('Send plaintext e-mail, not HTML') }
-          // Try to send HTML e-mail using sendmail
-          [ 'sendmail', '-t' ].execute() << sendmail_html
-          log.info "[nfcore/rnaseq] Sent summary e-mail to $params.email (sendmail)"
-        } catch (all) {
-          // Catch failures and try with plaintext
-          [ 'mail', '-s', subject, params.email ].execute() << email_txt
-          log.info "[nfcore/rnaseq] Sent summary e-mail to $params.email (mail)"
-        }
-    }
 
-    // Switch the embedded MIME images with base64 encoded src
-    ngirnaseqlogo = new File("$baseDir/assets/nfcore-rnaseq_logo.png").bytes.encodeBase64().toString()
-    email_html = email_html.replaceAll(~/cid:ngilogo/, "data:image/png;base64,$ngilogo")
-
-    // Write summary e-mail HTML to a file
-    def output_d = new File( "${params.outdir}/pipeline_info/" )
-    if( !output_d.exists() ) {
-      output_d.mkdirs()
-    }
-    def output_hf = new File( output_d, "pipeline_report.html" )
-    output_hf.withWriter { w -> w << email_html }
-    def output_tf = new File( output_d, "pipeline_report.txt" )
-    output_tf.withWriter { w -> w << email_txt }
-
-    if(skipped_poor_alignment.size() > 0){
-        log.info "[nfcore/rnaseq] WARNING - ${skipped_poor_alignment.size()} samples skipped due to poor alignment scores!"
-    }
-
-    log.info "[nfcore/rnaseq] Pipeline Complete"
-
-    if(!workflow.success){
-        if( workflow.profile == 'standard'){
-            if ( "hostname".execute().text.contains('.uppmax.uu.se') ) {
-                log.error "====================================================\n" +
-                        "  WARNING! You are running with the default 'standard'\n" +
-                        "  pipeline config profile, which runs on the head node\n" +
-                        "  and assumes all software is on the PATH.\n" +
-                        "  This is probably why everything broke.\n" +
-                        "  Please use `-profile uppmax` to run on UPPMAX clusters.\n" +
-                        "============================================================"
-            }
-        }
-    }
 
 }
