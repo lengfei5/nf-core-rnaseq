@@ -304,6 +304,7 @@ if( workflow.profile == 'standard'){
     }
 }
 
+
 /*
  * PREPROCESSING - Build STAR index
  */
@@ -464,8 +465,7 @@ process fastqc {
     """
     ml load fastqc/0.11.8-java-1.8;
     fastqc -q $reads
-    cat $reads | paste - - - - | wc -l > ${name}_cnt.txt
-
+    
     """
 }
 
