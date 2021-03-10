@@ -465,7 +465,7 @@ process fastqc {
     """
     ml load fastqc/0.11.8-java-1.8;
     fastqc -q $reads
-    
+
     """
 }
 
@@ -655,12 +655,7 @@ if(params.aligner == 'hisat2'){
 
     process hisat2_sortOutput {
         tag "${hisat2_bam.baseName}"
-        publishDir "${params.outdir}/HISAT2", mode: 'copy',
-            saveAs: { filename ->
-                if (!params.saveAlignedIntermediates && filename == "where_are_my_files.txt") filename
-                else if (params.saveAlignedIntermediates && filename != "where_are_my_files.txt") "aligned_sorted/$filename"
-                else null
-            }
+        publishDir "${params.outdir}/HISAT2", mode: 'copy'
 
         input:
         file hisat2_bam
@@ -675,7 +670,7 @@ if(params.aligner == 'hisat2'){
         """
         module load samtools/1.10-foss-2018b
         samtools sort -@ ${task.cpus} $avail_mem $hisat2_bam > ${hisat2_bam.baseName}.sorted.bam
-        samtools index -@ @{taks.cpus} -c -m 14 ${hisat2_bam.baseName}.sorted.bam
+        samtools index -@ ${task.cpus} -c -m 14 ${hisat2_bam.baseName}.sorted.bam
 
         """
     }
